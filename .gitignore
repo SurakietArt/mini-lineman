@@ -1,0 +1,13 @@
+# binaries
+/bin/
+# test and coverage output
+*.test
+*.out
+coverage.*
+# local env — never commit secrets
+.env
+.env.*
+!.env.example
+# editor
+.idea/
+.vscode/
