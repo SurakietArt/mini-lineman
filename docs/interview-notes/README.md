@@ -3,7 +3,7 @@
 One page to skim the whole project the night before an interview. Every concept, decision and
 question, with links to the detail.
 
-**Current phase: 0** · last updated 2026-10-07
+**Current phase: 0** · last updated 2026-10-07 (second session)
 
 ---
 
@@ -35,6 +35,10 @@ question, with links to the detail.
 | OCI naming rules | Container repo names cannot contain uppercase; `github.repository_owner` can | [phase-0](phase-0.md#oci-naming-rules-are-stricter-than-githubs) |
 | Inert workflow triggers | A workflow on the wrong branch produces no error and no run | [phase-0](phase-0.md#a-workflow-pointed-at-the-wrong-branch-does-not-fail) |
 | `GITHUB_TOKEN` scope | Scoped to its own repo; cross-repo package pulls need an explicit grant | [phase-0](phase-0.md#github_token-is-scoped-to-its-own-repository) |
+| Decorative branch protection | `enforce_admins: false` prints a rejection notice and accepts the push | [phase-0](phase-0.md#branch-protection-with-admin-bypass-is-decorative) |
+| Login shells discard `PATH` | `sh -lc` sources `/etc/profile` and loses the image's `ENV PATH` | [phase-0](phase-0.md#a-login-shell-discards-the-images-path) |
+| Repo vs package visibility | Separate settings; package visibility has no API, browser only | [phase-0](phase-0.md#repository-visibility-and-package-visibility-are-separate) |
+| Build-and-destroy CI | Build-only never tests the tag, the auth or the push | [phase-0](phase-0.md#build-and-destroy-proves-more-than-build-only) |
 
 ---
 
@@ -44,6 +48,8 @@ question, with links to the detail.
 |---|---|---|
 | [0001](../decisions/0001-toolchain-install.md) | Toolchain install and pinning — per-ecosystem images, `GOTOOLCHAIN=local`, dedicated images repo, pinned tags | accepted, 7 open questions |
 | [0002](../decisions/0002-defer-aws.md) | Defer AWS to the final phase — learn Kubernetes on `kind` first | accepted, 2 open questions |
+| [0003](../decisions/0003-public-repos-and-packages.md) | Public repos and packages — unlocks branch protection, removes the storage quota | accepted; supersedes 0001's private-package consequences |
+| [0004](../decisions/0004-branching-and-image-pipelines.md) | `main`/`develop`, protected `main`, build-and-destroy on develop | accepted, 3 open questions |
 
 ---
 
@@ -77,6 +83,10 @@ design judgement.
   changed the authority on every rebuild, silently, because a moving base only advances so the
   guard never fires. Pinning is only as strong as the weakest unpinned layer beneath it.
   [phase-0](phase-0.md#pinning-the-image-while-letting-its-base-float)
+- **"Tell me about a control you thought was working and wasn't."** Branch protection was
+  configured with admin bypass left on, so a direct push to a protected `main` succeeded while
+  GitHub printed a pull-request notice. Only an attempted violation revealed it.
+  [phase-0](phase-0.md#protection-i-configured-did-not-protect-anything)
 - **"Tell me about a time something failed for a reason you didn't expect."** The first publish
   run failed because the GitHub account name has capital letters and OCI repository names may
   not — not because of anything in the design that had been thought about carefully.
@@ -97,5 +107,7 @@ Live list — these get re-asked until they're clean.
 - Why per-ecosystem images beat per-repo images — still rests on tooling duplication alone.
 - Registry, authentication and credential handling: entirely undiscussed.
 - `go tool` directives taught but never used in practice.
+- Every Phase 0 failure so far has been environment plumbing, not design — four for four.
+  Useful prior: suspect the environment before the logic.
 
 Full list with context: [phase-0 § Still shaky](phase-0.md#5-still-shaky--re-ask-next-session).

@@ -1,10 +1,12 @@
-# Setting up private toolchain images on ghcr.io
+# Setting up toolchain images on ghcr.io
 
-Implements ADR 0001. Three toolchain images, published from two repos to GitHub Container
-Registry as **private** packages, pinned by digest, consumed by CI in four repos.
+Implements ADR 0001, amended by [ADR 0003](decisions/0003-public-repos-and-packages.md): the
+repos and packages are **public**, not private. Three toolchain images, published from two repos
+to GitHub Container Registry, pinned by digest, consumed by CI in four repos.
 
-Status: **steps 1–6 done** on 2026-10-07. Steps 7–9 (access grants, local login, consuming
-repo CI) not yet run. Versions and digests verified 2026-10-07.
+Status: **steps 1–6 done** on 2026-10-07, and both images verified running from the registry.
+**Steps 7 and 8 are now obsolete** — see ADR 0003. Step 9 (consuming repo CI) not yet run.
+Versions and digests verified 2026-10-07.
 
 Published:
 
@@ -218,40 +220,35 @@ Then confirm the packages exist:
 gh api /user/packages?package_type=container --jq '.[].name'
 ```
 
-## Step 7 — Grant each consuming repo access (the private-specific part)
+## Step 7 — Grant each consuming repo access — **OBSOLETE**
 
-A package published from `mini-lineman-images` is owned by that repo. Another repo's
-`GITHUB_TOKEN` is scoped to its own repo and **cannot pull a private package it was not granted
-access to**. Without this step, CI in every consuming repo fails with `denied` or
-`manifest unknown`.
+Needed only while the packages were private. A package published from one repo was unreachable
+by another repo's `GITHUB_TOKEN` until access was granted explicitly, per image per repo, and a
+missing grant surfaced as `denied` or `manifest unknown` in CI — an auth failure that looks like
+a registry outage and is actually a missing checkbox.
 
-For each image, in the browser:
+The packages are public (ADR 0003), so there is nothing to grant. Any CI job pulls with no
+configuration. Kept here because the reasoning is the interesting part: private packages across
+a multi-repo layout carry a recurring manual cost, one grant per image per repo, forever.
 
-1. `https://github.com/users/<owner>/packages/container/mini-lineman-go-tools/settings`
-2. **Manage Actions access** → **Add repository**
-3. Add `mini-lineman`, `mini-lineman-order` — role **Read**
-4. Repeat on `mini-lineman-py-tools` for `mini-lineman-payment`
-5. Repeat on `mini-lineman-proto-tools` for every repo that runs codegen
+## Step 8 — Your own login, for pulling locally — **OBSOLETE**
 
-Optionally use **Connect repository** to link the package to its source repo, which only affects
-where the package appears in the UI.
+Needed only while the packages were private. `gh auth login` does not authenticate `docker`, so
+a classic PAT with `read:packages` was required for local pulls.
 
-This is a manual grant per image per repo, repeated whenever you add either. It is the
-operational cost of choosing private, and it is the step people forget — then spend an hour
-debugging a CI auth failure that is actually a missing checkbox.
+Public packages pull unauthenticated. Verified after `docker logout`:
 
-## Step 8 — Your own login, for pulling locally
+```
+$ docker run --rm ghcr.io/surakietart/mini-lineman-go-tools:2026-10-07-3494037 \
+    sh -c 'go version; go env GOTOOLCHAIN; golangci-lint version'
+go version go1.27.1 linux/amd64
+local
+golangci-lint has version 2.14.0
+```
 
-CI uses `GITHUB_TOKEN`. You cannot; `gh auth login` does not authenticate `docker`.
-
-1. Create a **classic** PAT with scope `read:packages`
-   (`https://github.com/settings/tokens`)
-2. ```bash
-   echo "$GHCR_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
-   ```
-
-Do not commit the token. ADR 0001 decision 5 makes local Docker optional, so this step is
-optional too — skip it if you work on the host and let CI be the judge.
+Note `sh -c`, not `sh -lc`. A login shell sources `/etc/profile`, overwrites `PATH` and discards
+the `/usr/local/go/bin` the image sets via `ENV` — the first smoke test failed with
+`go: not found` in an image that plainly contains Go.
 
 ## Step 9 — Consume the image in a service repo
 
@@ -286,11 +283,11 @@ is the whole point of decision 6.
 
 ## Verification checklist
 
-- [ ] `gh api /user/packages?package_type=container` lists all three images
-- [ ] Each package's visibility reads **private**
-- [ ] Each consuming repo appears under that package's Actions access
-- [ ] A CI run in `mini-lineman-order` pulls the image and passes
-- [ ] `docker pull` of the image works locally after step 8
+- [x] Both images exist in ghcr and are tagged `<date>-<sha>`
+- [x] Both packages' visibility reads **public** — confirmed by an anonymous
+      `docker manifest inspect` after `docker logout`
+- [x] The release pipeline pulls each published image back and runs the tools inside it
+- [x] `docker pull` works locally with no credentials
 - [ ] A repo whose `go.mod` demands a newer Go than the image **fails** — proves
       `GOTOOLCHAIN=local` is actually in effect, rather than assumed
 
@@ -300,31 +297,31 @@ That last one is the only check that proves decision 3 works. Test it deliberate
 
 ## Costs this setup carries
 
-**Private package storage is metered.** Public packages are free; private ones consume a quota
-(GitHub Free includes roughly 500 MB storage and 1 GB/month data transfer — verify against
-current billing docs before relying on it). A Go toolchain image is a few hundred MB compressed,
-and every immutable tag is a new stored version.
+**Mistakes are permanent and public.** Commit history, failed CI runs and early bad designs are
+all readable. Every commit on every branch was scanned for tokens, keys and `.env` files before
+the switch to public, and was clean — but secrets discipline is now load-bearing: a committed
+credential in a private repo is a mistake, in a public one it is an incident.
 
-This collides directly with decision 6. "A build from six months ago is reproducible" requires
-keeping old versions; the quota pushes you to delete them. One of the two has to give, and that
-choice has not been made. Data transfer via `GITHUB_TOKEN` inside Actions does not count, so CI
-pulls are free — it is storage and local pulls that accumulate.
+**Tag immutability is yours to maintain**, not the registry's. ghcr does not enforce it; one
+careless re-push overwrites a tag with no error. The commit SHA in the tag is what actually
+guarantees it, provided you never reuse one.
 
-**Tag immutability is yours to maintain**, not the registry's. One careless re-push and the
-guarantee is gone with no error.
+**Storage is no longer a cost.** Public packages have no quota, so the conflict between
+"immutable never-reused tags" and a 500 MB limit is gone rather than traded. The `dev-` tag
+cleanup on `develop` now exists to keep the version list readable, not to protect a quota.
 
-**The PAT in step 8 is a long-lived credential** on your machine with no rotation story.
+**Two workflows duplicate their build, login and tag steps.** A third copy should become a
+reusable workflow instead.
 
-**Every new image or repo means new manual grants** in step 7.
+## Still undecided
 
----
-
-## Still undecided (ADR 0001 open questions)
-
-1. What moves the digest. "Devops manages it" is an owner, not a mechanism — nothing prompts
+1. **What moves the digest.** "Devops manages it" is an owner, not a mechanism — nothing prompts
    the bump, so digest pinning currently guarantees staleness rather than preventing it.
-   Renovate or Dependabot watching the digest would close this.
-2. Whether old image versions are retained or pruned — see the storage quota above.
-3. Who bumps the pinned tag in each consuming repo: each repo, or centrally.
-4. Whether services commit generated `*.pb.go` or generate at build time. This decides whether
-   the proto image needs Actions access in every repo, or only in `mini-lineman-proto`.
+   Renovate or Dependabot watching the digest would close this. *(ADR 0001 open question 1 —
+   still the most important one open.)*
+2. **Who bumps the pinned tag in each consuming repo:** each repo, or centrally.
+3. **Whether services commit generated `*.pb.go` or generate at build time.** No longer affects
+   access grants now that packages are public, but still decides what the proto image is for.
+4. **The proto image does not exist yet.** `proto-tools/Dockerfile` has not been written; only
+   the Go and Python images are published.
+5. **Service repo CI.** Step 9's example is written but not applied to any repo.

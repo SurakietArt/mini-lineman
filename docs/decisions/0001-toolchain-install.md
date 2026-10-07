@@ -1,7 +1,8 @@
 # 1. Toolchain install and pinning
 
 - **Date:** 2026-10-06
-- **Status:** accepted
+- **Status:** accepted; private-package consequences superseded by
+  [ADR 0003](0003-public-repos-and-packages.md)
 - **Deciders:** ArtZ
 
 ## Context

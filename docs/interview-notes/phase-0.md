@@ -91,6 +91,45 @@ explicitly.
 like a registry or auth outage and is actually a missing per-repo grant. This is the hidden cost
 of private packages across a multi-repo layout.
 
+### Branch protection with admin bypass is decorative
+
+GitHub's `enforce_admins: false` lets repository admins push straight to a protected branch. It
+prints "Changes must be made through a pull request" — and then **accepts the push**. The notice
+reads like a rejection and is not one.
+
+**Failure mode:** on a single-maintainer repo the only person who can push is the admin, so
+protection with bypass enabled protects against nobody while appearing configured. "We had
+branch protection" means nothing in an interview until you say whether admins were exempt.
+
+### A login shell discards the image's PATH
+
+`docker run image sh -lc '...'` sources `/etc/profile`, which overwrites `PATH` with a system
+default and drops whatever the image set via `ENV`. `sh -c` keeps the image's environment.
+
+**Failure mode:** `go: not found` from an image that demonstrably contains Go. The error points
+at the image; the cause is a shell flag. Costs real time because the obvious hypothesis — a
+broken Dockerfile — is wrong.
+
+### Repository visibility and package visibility are separate
+
+Making a repo public does not make its ghcr packages public. There is also no REST or GraphQL
+endpoint for changing a user-owned package's visibility — `PATCH /user/packages/container/{name}`
+returns **404, not 403**, so no token scope helps. It is browser-only.
+
+**Failure mode:** you flip the repos, assume you are done, and CI in other repos still fails on
+`denied` because the packages are untouched.
+
+### Build-and-destroy proves more than build-only
+
+A CI job that builds an image without pushing proves the Dockerfile compiles. It does not prove
+the tag computation, the registry auth or the push — and those are where failures actually
+happen. Pushing a throwaway, pulling it *back from the registry*, running it, then deleting it
+under `if: always()` exercises the whole path for the price of one temporary version.
+
+**Failure mode:** a green "build" pipeline on develop and a broken publish on main, because the
+two did different things. `if: always()` matters — without it, a cancelled run orphans the
+throwaway it was supposed to clean up.
+
 ---
 
 ## 2. Decisions made
@@ -129,6 +168,36 @@ the cloud port as a deliberate final exercise."
 it, I have Kubernetes experience and no managed-service experience. kind doesn't teach you cloud
 load balancers, IAM-to-pod identity or control-plane upgrades, and I'd say that plainly rather
 than imply the two are equivalent."
+
+### [ADR 0003 — Public repositories and packages](../decisions/0003-public-repos-and-packages.md)
+
+All five repos and both packages are public. Branch protection becomes available on the free
+plan, the package storage quota disappears, and per-repo access grants become unnecessary.
+
+**How to say this in an interview:**
+"I went public because the repos are portfolio material — they have to be readable by someone
+who isn't me. It also resolved three things at once: branch protection is free on public repos,
+private package storage is capped at 500 MB which conflicted with keeping immutable tags
+forever, and cross-repo package pulls no longer need a manual grant per repo."
+
+**And the cost:**
+"It contradicted my own stated reason for separating the payment service — I'd written
+'sensitive, restricted access', and a public repo disproves that. The independent deploy cadence
+still justifies the split, so that has to become the reason. And secrets discipline stops being
+advisory: a committed credential in a private repo is a mistake, in a public one it's an
+incident."
+
+### [ADR 0004 — Branching model and image pipelines](../decisions/0004-branching-and-image-pipelines.md)
+
+`main` is the protected production branch, `develop` the integration branch. Two pipelines that
+differ only in what happens to the artifact: develop pushes a `dev-` throwaway, smoke tests it
+and deletes it; main pushes a kept tag and smoke tests it.
+
+**How to say this in an interview:**
+"develop proves the whole publish path works — build, push, pull back, run the tools inside the
+image — then deletes the throwaway. main does the same minus the delete. I built it that way
+because my first pipeline failure was in the tag computation, which a build-only job would never
+have caught."
 
 ---
 
@@ -197,6 +266,18 @@ interaction was worked through.
 beneath it. "We pinned the image" means nothing if the Dockerfile says `FROM golang:latest`. This
 is a good answer to "tell me about a design flaw you caught before it shipped."
 
+### Protection I configured did not protect anything
+
+The first branch-protection pass set `enforce_admins: false` to avoid a lockout. A test push to
+`main` then succeeded — GitHub emitted the pull-request notice and accepted the push anyway —
+leaving a stray empty commit on a public `main` that required temporarily re-enabling force push
+to remove.
+
+**The lesson:** verify a control by trying to violate it. The configuration said "protected" and
+the behaviour said otherwise, and only an actual attempted push distinguished the two. This is
+the same shape as the `GOTOOLCHAIN=local` check still sitting unticked in the setup guide —
+a guard nobody has tried to breach is an assumption, not a guard.
+
 ### The first CI run failed on an uppercase letter
 
 The publish workflow was correct in every way that felt important — digest-pinned base, scoped
@@ -238,6 +319,10 @@ fully-formed has no defensible reasoning attached to it.
    happens when a CVE lands in the base OS." Asked, not answered. This is the same staleness
    problem as ADR 0001 open question 1, approached from the security side — if he can answer it
    he has closed that question himself.
-7. **Credential blast radius.** Also asked and unanswered: where CI's registry credentials come
+7. **Pattern worth naming:** every failure this phase has been environment plumbing, not
+   design — an uppercase letter in an account name, a workflow pointed at a renamed branch,
+   admin bypass, a login shell discarding `PATH`. Four for four. Good answer to "what actually
+   breaks when you set up CI", and a useful prior: suspect the environment before the logic.
+8. **Credential blast radius.** Also asked and unanswered: where CI's registry credentials come
    from and what leaking them would cost. He has used `GITHUB_TOKEN` correctly without yet
    explaining why it is safer than a stored PAT.
